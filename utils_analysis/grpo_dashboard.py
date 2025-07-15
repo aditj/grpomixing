@@ -6,7 +6,7 @@ import pdb
 import re
 app = Flask(__name__)
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'GRPO_based_soft_thinking', 'output_new')
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '../output_new')
 
 @app.route('/')
 def index():
