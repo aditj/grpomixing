@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generation Log Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: sans-serif; }
+        .container { display: flex; flex-direction: column; gap: 20px; padding: 20px; }
+        .controls { display: flex; gap: 10px; align-items: center; }
+        .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
+        .chart-container { border: 1px solid #ccc; padding: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Generation Log Dashboard</h1>
+        <div class="controls">
+            <label for="exp-select">Select Experiment:</label>
+            <select id="exp-select"></select>
+            <button id="load-btn">Load Data</button>
+        </div>
+        <div id="charts" class="charts"></div>
+    </div>
+
+    <script>
+        const expSelect = document.getElementById('exp-select');
+        const loadBtn = document.getElementById('load-btn');
+        const chartsDiv = document.getElementById('charts');
+        let charts = {};
+
+        async function fetchExperiments() {
+            const response = await fetch('/api/experiments');
+            const experiments = await response.json();
+            expSelect.innerHTML = experiments.map(exp => `<option value="${exp}">${exp}</option>`).join('');
+        }
+
+        function createOrUpdateChart(canvasId, label, xData, yData) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            if (charts[canvasId]) {
+                charts[canvasId].destroy();
+            }
+            charts[canvasId] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: xData,
+                    datasets: [{
+                        label: label,
+                        data: yData,
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    scales: {
+                        x: { title: { display: true, text: 'Training Step' } }
+                    }
+                }
+            });
+        }
+
+        async function loadExperimentData() {
+            const expName = expSelect.value;
+            if (!expName) return;
+
+            const response = await fetch(`/api/generation_data?exp=${expName}`);
+            const data = await response.json();
+            
+            chartsDiv.innerHTML = ''; // Clear previous charts
+
+            const stats = data.exp.generation_stats;
+            if (!stats) {
+                chartsDiv.innerHTML = '<p>No generation data found for this experiment.</p>';
+                return;
+            }
+
+            const chartConfigs = [
+                { id: 'mixtureProportion', title: 'Avg. Mixture Proportion', data: stats.avg_mixture_proportion },
+                { id: 'probStd', title: 'Avg. Normalized Prob Std Dev', data: stats.avg_normalized_prob_std },
+                { id: 'seqLength', title: 'Avg. Sequence Length', data: stats.avg_sequence_length },
+                { id: 'phaseTransitions', title: 'Phase Transition Counts', data: stats.phase_transition_counts }
+            ];
+
+            chartConfigs.forEach(config => {
+                const chartContainer = document.createElement('div');
+                chartContainer.className = 'chart-container';
+                const canvas = document.createElement('canvas');
+                canvas.id = config.id;
+                chartContainer.innerHTML = `<h3>${config.title}</h3>`;
+                chartContainer.appendChild(canvas);
+                chartsDiv.appendChild(chartContainer);
+                createOrUpdateChart(config.id, data.exp.name, stats.steps, config.data);
+            });
+        }
+
+        loadBtn.addEventListener('click', loadExperimentData);
+
+        fetchExperiments();
+    </script>
+</body>
+</html> 

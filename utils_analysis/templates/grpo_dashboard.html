@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GRPO Experiment Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .container {
+            margin-top: 20px;
+        }
+        .card {
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">GRPO Experiment Dashboard</h1>
+
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Experiment Selection</h5>
+                <div class="row">
+                    <div class="col-md-5">
+                        <label for="exp1" class="form-label">Experiment 1</label>
+                        <select id="exp1" class="form-select"></select>
+                    </div>
+                    <div class="col-md-5">
+                        <label for="exp2" class="form-label">Experiment 2 (optional)</label>
+                        <select id="exp2" class="form-select"></select>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button id="load-data" class="btn btn-primary w-100">Load Data</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" id="metric-selection-card" style="display: none;">
+            <div class="card-body">
+                <h5 class="card-title">Metric Selection</h5>
+                <div id="metric-checkboxes" class="d-flex flex-wrap"></div>
+            </div>
+        </div>
+
+        <div id="dashboard-area"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const exp1Select = document.getElementById('exp1');
+            const exp2Select = document.getElementById('exp2');
+            const loadButton = document.getElementById('load-data');
+            const dashboardArea = document.getElementById('dashboard-area');
+            const metricSelectionCard = document.getElementById('metric-selection-card');
+            const metricCheckboxes = document.getElementById('metric-checkboxes');
+            
+            let chartInstances = {};
+            let currentData = null;
+
+            // Fetch experiment list
+            fetch('/api/experiments')
+                .then(response => response.json())
+                .then(experiments => {
+                    populateSelect(exp1Select, experiments, "Select Experiment 1");
+                    populateSelect(exp2Select, experiments, "None (Select Experiment 2)");
+                });
+
+            function populateSelect(selectElement, options, defaultOptionText) {
+                selectElement.innerHTML = '';
+                const defaultOption = document.createElement('option');
+                defaultOption.value = '';
+                defaultOption.textContent = defaultOptionText;
+                selectElement.appendChild(defaultOption);
+                options.forEach(exp => {
+                    const option = document.createElement('option');
+                    option.value = exp;
+                    option.textContent = exp;
+                    selectElement.appendChild(option);
+                });
+            }
+            
+            loadButton.addEventListener('click', () => {
+                const exp1 = exp1Select.value;
+                if (!exp1) {
+                    alert("Please select at least Experiment 1.");
+                    return;
+                }
+                
+                let url = `/api/experiment_data?exp1=${exp1}`;
+                const exp2 = exp2Select.value;
+                if (exp2) {
+                    url += `&exp2=${exp2}`;
+                }
+
+                fetch(url)
+                    .then(response => response.json())
+                    .then(data => {
+                        currentData = data;
+                        metricSelectionCard.style.display = 'block';
+                        populateMetricSelection();
+                        renderDashboard();
+                    });
+            });
+
+            function populateMetricSelection() {
+                metricCheckboxes.innerHTML = '';
+                const availableMetrics = new Set();
+                
+                const dataSources = [currentData.exp1, currentData.exp2];
+                dataSources.forEach(expData => {
+                    if (expData) {
+                        if (expData.training) Object.keys(expData.training).filter(k => k !== 'steps').forEach(m => availableMetrics.add(m));
+                        if (expData.evaluation && expData.evaluation.summary) Object.keys(expData.evaluation.summary).filter(k => k !== 'steps').forEach(m => availableMetrics.add(m));
+                        if (expData.evaluation && expData.evaluation.details) Object.keys(expData.evaluation.details).forEach(m => availableMetrics.add(m));
+                    }
+                });
+
+                Array.from(availableMetrics).sort().forEach(metric => {
+                    const div = document.createElement('div');
+                    div.className = 'form-check form-check-inline';
+                    const input = document.createElement('input');
+                    input.type = 'checkbox';
+                    input.className = 'form-check-input';
+                    input.id = `check-${metric}`;
+                    input.value = metric;
+                    input.checked = true;
+                    input.addEventListener('change', renderDashboard);
+                    const label = document.createElement('label');
+                    label.className = 'form-check-label';
+                    label.htmlFor = `check-${metric}`;
+                    label.textContent = metric.replace(/_/g, ' ');
+                    
+                    div.appendChild(input);
+                    div.appendChild(label);
+                    metricCheckboxes.appendChild(div);
+                });
+            }
+
+            function getSelectedMetrics() {
+                const selected = [];
+                metricCheckboxes.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
+                    selected.push(cb.value);
+                });
+                return selected;
+            }
+
+            function renderDashboard() {
+                dashboardArea.innerHTML = '';
+                Object.values(chartInstances).forEach(chart => chart.destroy());
+                chartInstances = {};
+
+                const selectedMetrics = getSelectedMetrics();
+                if (!currentData || selectedMetrics.length === 0) {
+                    return;
+                }
+                
+                selectedMetrics.forEach(metric => {
+                    const chartData = getChartDataForMetric(metric);
+                    if (chartData.datasets.length > 0) {
+                        createChart(metric, chartData.datasets, chartData.title);
+                    }
+                });
+            }
+
+            function getChartDataForMetric(metric) {
+                const datasets = [];
+                let title = metric.replace(/_/g, ' ');
+
+                function processDataSource(expData, color, type, detailKey = null) {
+                    if (!expData) return;
+                    
+                    let source, xValues, yValues;
+                    if(type === 'training' && expData.training && expData.training[metric]){
+                        source = expData.training;
+                        xValues = source.steps;
+                        yValues = source[metric];
+                    } else if (type === 'eval-summary' && expData.evaluation && expData.evaluation.summary && expData.evaluation.summary[metric]){
+                        source = expData.evaluation.summary;
+                        xValues = source.steps;
+                        yValues = source[metric];
+                        title = `Eval: ${title}`;
+                    } else if (type === 'eval-details' && expData.evaluation && expData.evaluation.details && expData.evaluation.details[metric]){
+                         source = expData.evaluation.details[metric];
+                         xValues = source.steps;
+                         yValues = source.values;
+                         title = `Eval Detail: ${title}`;
+                    }
+
+                    if (xValues && yValues) {
+                         datasets.push({
+                            label: `${expData.name} - ${metric.replace(/_/g, ' ')}`,
+                            data: yValues.map((y, i) => ({x: xValues[i], y: y})).filter(p => p.y !== null),
+                            borderColor: color,
+                            backgroundColor: color + '80', // for points
+                            fill: false,
+                            tension: 0.1
+                        });
+                    }
+                }
+
+                processDataSource(currentData.exp1, 'rgba(0, 123, 255, 1)', 'training');
+                processDataSource(currentData.exp2, 'rgba(255, 99, 132, 1)', 'training');
+
+                processDataSource(currentData.exp1, 'rgba(0, 123, 255, 1)', 'eval-summary');
+                processDataSource(currentData.exp2, 'rgba(255, 99, 132, 1)', 'eval-summary');
+                
+                processDataSource(currentData.exp1, 'rgba(0, 123, 255, 1)', 'eval-details');
+                processDataSource(currentData.exp2, 'rgba(255, 99, 132, 1)', 'eval-details');
+
+                return { datasets, title };
+            }
+
+            function createChart(metric, datasets, title) {
+                const card = document.createElement('div');
+                card.className = 'card';
+                const cardBody = document.createElement('div');
+                cardBody.className = 'card-body';
+                const canvas = document.createElement('canvas');
+                cardBody.appendChild(canvas);
+                card.appendChild(cardBody);
+                dashboardArea.appendChild(card);
+                
+                const ctx = canvas.getContext('2d');
+                chartInstances[metric] = new Chart(ctx, {
+                    type: 'line',
+                    data: { datasets: datasets },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: title,
+                                font: { size: 18 }
+                            },
+                            legend: {
+                                position: 'top',
+                            },
+                        },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: {
+                                    display: true,
+                                    text: 'Step'
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Value'
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html> 
