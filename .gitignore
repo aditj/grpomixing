@@ -174,3 +174,5 @@ output/*
 output 
 output_new/*
 output_new
+output_prompt_new
+output_prompt_new/*

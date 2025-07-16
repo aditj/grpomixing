@@ -368,6 +368,8 @@ def build_reasoning_gym_dataloaders(dataset_name: str, size: int) -> Tuple[DataL
         data = reasoning_gym.create_dataset(reasoning_task, size=10000,seed=42,p_blocked=0.1,min_rows=3,min_cols=3)
     elif reasoning_task == 'family_relationships':
         data = reasoning_gym.create_dataset(reasoning_task, size=10000,seed=42,min_family_size=8,max_family_size=12)
+    elif reasoning_task == 'maze':
+        data = reasoning_gym.create_dataset(reasoning_task, size=5000,seed=42)
     elif reasoning_task == 'sokoban':
         data = reasoning_gym.create_dataset(reasoning_task, size=1000,seed=42,min_w=3,max_w=5,min_h=3,max_h=5,min_boxes=2,max_boxes=3)
     else:   
